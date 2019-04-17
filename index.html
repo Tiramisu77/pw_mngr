@@ -1,0 +1,413 @@
+
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <title>Password Manager</title>
+
+    <style>
+    html,body{
+      width:100%;
+      height:100%;
+      margin:0px;
+      padding:0px
+    }
+
+    #app{
+      height:100%;
+      align-content: center;
+      justify-content: center;
+      display:grid;
+    }
+    #main{
+      display:none
+    }
+    #pw-table {
+      margin-top:22px
+    }
+
+    table,tbody{
+      width:100%
+    }
+
+    .inp{
+      width:100%
+    }
+    </style>
+  </head>
+  <body>
+<div id="app">
+  <div id="warning" style="color:red;display:none">
+    Warning! This page is for demo purposes only, do not put your actual passwords here.
+    <br/>
+    If you want to use this program, download this page, review the code and run locally.
+  </div>
+  <div id="enter">
+    <input id="master-password" type="password" placeholder="enter master password">
+    <button>open</button>
+    <div id="open-err-msg" style="color:red"> </div>
+  </div>
+  <div id="main">
+  <div>
+    <button id="change-mstr-pw">change master password</button>
+  </div>
+  <br/>
+
+  <div id="generate-password">
+    <input type="radio" id="sixty-four" name="bits" value="64">
+    <label for="sixty-four">64 bits</label>
+    <input type="radio" id="hundred-twenty-eight" name="bits" value="128"   checked>
+    <label for="hundred-twenty-eight">128 bits</label>
+    <input type="radio" id="two-hundred-fifty-six" name="bits" value="256">
+    <label for="two-hundred-fifty-six">256 bits</label>
+    <button>generate password</button>
+    <span> (base64) </span>
+  </div>
+  <br/>
+
+  <div id="add">
+  <input id="new-pw-name" placeholder="name"  class="inp"/>
+  <input id="new-pw" placeholder="password" class="inp"/>
+  <button>add password</button>
+  </div>
+
+  <div>
+
+  </div>
+
+  <div id="pw-table">
+  <table>
+    <thead>
+      <tr>
+        <td>name</td>
+        <td>password</td>
+      </tr>
+    </thead>
+  <tbody>
+
+  </tbody>
+  </table>
+  </div>
+
+
+</div>
+</div>
+
+<script >
+
+const simpleCrypto = (function() {
+    const encodeText = function(text) {
+        return new TextEncoder().encode(text)
+    }
+
+    const decodeText = function(typedArr) {
+        return new TextDecoder().decode(typedArr)
+    }
+
+    const getKeyMaterial = function(password) {
+        return window.crypto.subtle.importKey("raw", encodeText(password), { name: "PBKDF2" }, false, [
+            "deriveBits",
+            "deriveKey",
+        ])
+    }
+
+    const deriveKey = async function(password, salt) {
+        let keyMaterial = await getKeyMaterial(password)
+        let key = await window.crypto.subtle.deriveKey(
+            {
+                name: "PBKDF2",
+                salt,
+                iterations: 1000000,
+                hash: "SHA-256",
+            },
+            keyMaterial,
+            { name: "AES-GCM", length: 256 },
+            true,
+            ["encrypt", "decrypt"]
+        )
+        return key
+    }
+
+    const typedArrToB64 = function(uint8arr) {
+        return btoa(String.fromCharCode(...Array.from(uint8arr)))
+    }
+
+    const b64toTypedArr = function(b64) {
+        return new Uint8Array(
+            atob(b64)
+                .split("")
+                .map(e => e.charCodeAt(0))
+        )
+    }
+
+    const deserializeCT = function(serializedCT) {
+        let [salt, iv, ct] = serializedCT.split(";").map(b64toTypedArr)
+        return {
+            salt,
+            iv,
+            ct,
+        }
+    }
+
+    const getRandomBytes = function(n) {
+        return window.crypto.getRandomValues(new Uint8Array(n))
+    }
+
+    const encrypt = async function(password, text) {
+      if(!password) throw new Error("password was not provided")
+        let iv = getRandomBytes(12)
+        let salt = getRandomBytes(16)
+        let encodedPT = encodeText(text)
+        let key = await deriveKey(password, salt)
+
+        let ct = await crypto.subtle.encrypt(
+            {
+                name: "AES-GCM",
+                iv,
+            },
+            key,
+            encodedPT
+        )
+
+        return `${typedArrToB64(salt)};${typedArrToB64(iv)};${typedArrToB64(new Uint8Array(ct))}`
+    }
+
+    const decrypt = async function(password, serializedCT) {
+        if(!password) throw new Error("password was not provided")
+        try {
+            let { salt, iv, ct } = deserializeCT(serializedCT)
+
+            let key = await deriveKey(password, salt)
+
+            let res = await window.crypto.subtle.decrypt(
+                {
+                    name: "AES-GCM",
+                    iv,
+                },
+                key,
+                ct
+            )
+
+            return decodeText(res)
+        } catch (e) {
+            console.error(e)
+            throw new Error("incorrect password")
+        }
+    }
+
+    const generatePassword = function(bitLength) {
+        return typedArrToB64(getRandomBytes(bitLength / 8)).replace(/=/g, "")
+    }
+
+    return { encrypt, decrypt, generatePassword }
+})()
+
+class Item {
+    constructor(model, savePasswords, removeItem) {
+        this.element = document.createElement(`tr`)
+        this.element.innerHTML = `
+          <td>
+          <input class="name">
+          </td>
+          <td>
+          <input class="password inp">
+          </td>
+          <td>
+          <div class="remove-btn" style="cursor:pointer"> ×</div>
+          </td>
+          `
+
+        this.model = model
+        this.name = this.element.querySelector(".name")
+        this.password = this.element.querySelector(".password")
+        this.removeBtn = this.element.querySelector(".remove-btn")
+
+        this.name.addEventListener("change", async () => {
+            this.model.name = this.name.value
+            await savePasswords()
+        })
+
+        this.password.addEventListener("change", async () => {
+            this.model.password = this.password.value
+            await savePasswords()
+        })
+
+        this.password.addEventListener("click", ev => {
+            ev.target.setSelectionRange(0, ev.target.value.length)
+        })
+
+        this.removeBtn.addEventListener("click", async () => {
+            removeItem(this.model, this.element)
+            await savePasswords()
+        })
+
+        this.render()
+    }
+
+    render() {
+        let { name, password } = this.model
+        this.name.value = name
+        this.password.value = password
+    }
+}
+
+class PasswordManager {
+    constructor() {
+        this.savePasswords = this.savePasswords.bind(this)
+        this.removeItem = this.removeItem.bind(this)
+        this.masterPassword = null
+        this.items = []
+        this.itemsView = document.getElementById("pw-table").querySelector("tbody")
+
+        document.querySelector("#enter > button").addEventListener("click",async ()=>{
+          try{
+              await this.loadAndDecrypt(document.querySelector("#enter > input").value)
+              document.querySelector("#app").removeChild(document.querySelector("#enter"))
+              document.querySelector("#main").style.display = "block"
+              this.renderItems()
+          }
+          catch(e){
+            document.querySelector("#open-err-msg").textContent = "incorrect master password"
+          }
+        })
+
+        document
+            .querySelector("#add > button")
+            .addEventListener("click", async () => {
+                let name = document.getElementById("new-pw-name").value
+                let password = document.getElementById("new-pw").value
+                document.getElementById("new-pw").value = ""
+                document.getElementById("new-pw-name").value = ""
+                let item = { name, password }
+                await this.addItem(item)
+            })
+
+        document.getElementById("change-mstr-pw").addEventListener("click", this.changeMasterPw.bind(this))
+
+        document.querySelector("#generate-password > button").addEventListener("click", () => {
+            let length = Number(
+                Array.from(document.querySelectorAll("#generate-password > input")).filter(e => e.checked)[0].value
+            )
+            let password = simpleCrypto.generatePassword(length)
+            document.getElementById("new-pw").value = password
+        })
+
+        window.addEventListener("load", this.onLaunch.bind(this))
+    }
+
+    async onLaunch() {
+      if(!localStorage.getItem("__PW_STORAGE__")){
+          let masterPassword = prompt("Select your master password")
+          if(!masterPassword) return
+          this.masterPassword = masterPassword
+          await this.savePasswords()
+      }
+
+    }
+
+    async loadAndDecrypt(masterPassword) {
+
+            if (!masterPassword) {
+              throw new Error("no master password")
+            }
+
+            let storageEnc = localStorage.getItem("__PW_STORAGE__")
+
+            let storageDec = await simpleCrypto.decrypt(masterPassword, storageEnc)
+            this.masterPassword = masterPassword
+            this.items = JSON.parse(storageDec)
+            document.getElementById("app").style.display = "grid"
+
+    }
+
+    async savePasswords() {
+        let storageStr = JSON.stringify(this.items)
+        let storageEnc = await simpleCrypto.encrypt(this.masterPassword, storageStr)
+        localStorage.setItem("__PW_STORAGE__", storageEnc)
+    }
+
+    renderItems() {
+        this.items.forEach(item => {
+            let itemView = new Item(item, this.savePasswords, this.removeItem)
+            this.itemsView.appendChild(itemView.element)
+        })
+    }
+
+    async addItem(item) {
+        this.items.unshift(item)
+        let itemView = new Item(item, this.savePasswords, this.removeItem)
+
+        this.itemsView.insertBefore(itemView.element, this.itemsView.firstChild)
+
+        await this.savePasswords()
+    }
+
+    async changeMasterPw() {
+        let newMasterPw = prompt("Enter new master password")
+        if (newMasterPw === null) return
+        if (confirm("Are you sure you want to change your master password?")) {
+            this.masterPassword = newMasterPw
+            await this.savePasswords()
+        }
+    }
+
+    removeItem(item, element) {
+        this.items = this.items.filter(e => e !== item)
+        this.itemsView.removeChild(element)
+    }
+
+    exportEncryptedStorage() {
+        console.log(localStorage.getItem("__PW_STORAGE__"))
+    }
+
+    exportPlaintextStorage() {
+        console.log(JSON.stringify(this.items))
+    }
+
+    importEncryptedStorage(newStorage) {
+        if (
+            confirm(
+                "Warning: this action will permantently erase the current storage. Are you sure you want to continue?"
+            )
+        ) {
+            localStorage.setItem("__PW_STORAGE__", newStorage)
+            window.location.reload()
+        }
+    }
+
+    async importPlaintextStorage(newStorage, merge = false) {
+        let newItems = JSON.parse(newStorage)
+        if (merge) {
+            this.items = [...newItems, ...this.items]
+        } else {
+            if (
+                confirm(
+                    "Warning: this action will permantently erase the current storage. Are you sure you want to continue?"
+                )
+            ) {
+                this.items = newItems
+            } else return
+        }
+        await this.savePasswords()
+        window.location.reload()
+    }
+}
+
+window.pw_mngr = new PasswordManager()
+
+document.querySelectorAll(".inp").forEach(e => {
+    e.addEventListener("click", ev => {
+        ev.target.setSelectionRange(0, ev.target.value.length)
+    })
+})
+
+window.addEventListener("load",()=>{
+  if(window.location.protocol!=="file:"){
+    document.getElementById("warning").style.display = "block"
+  }
+})
+
+
+</script>
+  </body>
+</html>
