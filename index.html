@@ -66,6 +66,7 @@
   <br/>
 
   <div id="add">
+  <input id="new-pw-domain" placeholder="domain"  class="inp"/>
   <input id="new-pw-name" placeholder="name"  class="inp"/>
   <input id="new-pw" placeholder="password" class="inp"/>
   <button>add password</button>
@@ -79,7 +80,8 @@
   <table>
     <thead>
       <tr>
-        <td>name</td>
+        <td>domain</td>
+        <td>username</td>
         <td>password</td>
       </tr>
     </thead>
@@ -207,7 +209,10 @@ class Item {
         this.element = document.createElement(`tr`)
         this.element.innerHTML = `
           <td>
-          <input class="name">
+          <input class="domain inp">
+          </td>
+          <td>
+          <input class="name inp">
           </td>
           <td>
           <input class="password inp">
@@ -218,9 +223,15 @@ class Item {
           `
 
         this.model = model
+        this.domain = this.element.querySelector(".domain")
         this.name = this.element.querySelector(".name")
         this.password = this.element.querySelector(".password")
         this.removeBtn = this.element.querySelector(".remove-btn")
+
+        this.domain.addEventListener("change", async () => {
+            this.model.domain = this.domain.value
+            await savePasswords()
+        })
 
         this.name.addEventListener("change", async () => {
             this.model.name = this.name.value
@@ -232,8 +243,10 @@ class Item {
             await savePasswords()
         })
 
-        this.password.addEventListener("click", ev => {
-            ev.target.setSelectionRange(0, ev.target.value.length)
+        this.element.querySelectorAll("input").forEach(e=>{
+          e.addEventListener("click", ev => {
+              ev.target.setSelectionRange(0, ev.target.value.length)
+          })
         })
 
         this.removeBtn.addEventListener("click", async () => {
@@ -245,7 +258,8 @@ class Item {
     }
 
     render() {
-        let { name, password } = this.model
+        let { domain,name, password } = this.model
+        this.domain.value = domain
         this.name.value = name
         this.password.value = password
     }
@@ -274,11 +288,15 @@ class PasswordManager {
         document
             .querySelector("#add > button")
             .addEventListener("click", async () => {
+                let domain = document.getElementById("new-pw-domain").value
                 let name = document.getElementById("new-pw-name").value
                 let password = document.getElementById("new-pw").value
+
+                document.getElementById("new-pw-domain").value = ""
                 document.getElementById("new-pw").value = ""
                 document.getElementById("new-pw-name").value = ""
-                let item = { name, password }
+
+                let item = { domain,name, password }
                 await this.addItem(item)
             })
 
