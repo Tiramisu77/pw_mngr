@@ -2,7 +2,7 @@
 
 A tiny, portable password manager, built around `localStorage` and `window.crypto` APIs. Data is encrypted with AES-GCM, key is derived with PBKDF2, random passwords are generated with `crypto.getRandomBytes` and presented in base64 form.
 
-###### console commands
+#### console commands
 
 `pw_mngr.exportEncryptedStorage()` - outputs encrypted and base64-encoded password storage, in format: `salt;iv;ciphertext`
 
