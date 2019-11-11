@@ -98,111 +98,129 @@
 <script >
 
 const simpleCrypto = (function() {
-    const encodeText = function(text) {
-        return new TextEncoder().encode(text)
-    }
+             const KDF_ITERATIONS = 1000000
+             const KDF_NAME = "PBKDF2"
+             const KDF_HASH = "SHA-256"
 
-    const decodeText = function(typedArr) {
-        return new TextDecoder().decode(typedArr)
-    }
+             const ENCRYPTION_ALGO = "AES-GCM"
+             const KEY_LENGTH = 256
 
-    const getKeyMaterial = function(password) {
-        return window.crypto.subtle.importKey("raw", encodeText(password), { name: "PBKDF2" }, false, [
-            "deriveBits",
-            "deriveKey",
-        ])
-    }
+             const encodeText = function(text) {
+                 return new TextEncoder().encode(text)
+             }
 
-    const deriveKey = async function(password, salt) {
-        let keyMaterial = await getKeyMaterial(password)
-        let key = await window.crypto.subtle.deriveKey(
-            {
-                name: "PBKDF2",
-                salt,
-                iterations: 1000000,
-                hash: "SHA-256",
-            },
-            keyMaterial,
-            { name: "AES-GCM", length: 256 },
-            true,
-            ["encrypt", "decrypt"]
-        )
-        return key
-    }
+             const decodeText = function(typedArr) {
+                 return new TextDecoder().decode(typedArr)
+             }
 
-    const typedArrToB64 = function(uint8arr) {
-        return btoa(String.fromCharCode(...Array.from(uint8arr)))
-    }
+             const getKeyMaterial = function(password) {
+                 return window.crypto.subtle.importKey("raw", encodeText(password), { name: "PBKDF2" }, false, [
+                     "deriveBits",
+                     "deriveKey",
+                 ])
+             }
 
-    const b64toTypedArr = function(b64) {
-        return new Uint8Array(
-            atob(b64)
-                .split("")
-                .map(e => e.charCodeAt(0))
-        )
-    }
+             const deriveKey = async function(password, salt) {
+                 let keyMaterial = await getKeyMaterial(password)
+                 let key = await window.crypto.subtle.deriveKey(
+                     {
+                         name: KDF_NAME,
+                         salt,
+                         iterations: KDF_ITERATIONS,
+                         hash: KDF_HASH,
+                     },
+                     keyMaterial,
+                     { name: ENCRYPTION_ALGO, length: KEY_LENGTH },
+                     true,
+                     ["encrypt", "decrypt"]
+                 )
+                 return key
+             }
 
-    const deserializeCT = function(serializedCT) {
-        let [salt, iv, ct] = serializedCT.split(";").map(b64toTypedArr)
-        return {
-            salt,
-            iv,
-            ct,
-        }
-    }
+             const typedArrToB64 = function(uint8arr) {
+                 return btoa(String.fromCharCode(...Array.from(uint8arr)))
+             }
 
-    const getRandomBytes = function(n) {
-        return window.crypto.getRandomValues(new Uint8Array(n))
-    }
+             const b64toTypedArr = function(b64) {
+                 return new Uint8Array(
+                     atob(b64)
+                         .split("")
+                         .map(e => e.charCodeAt(0))
+                 )
+             }
 
-    const encrypt = async function(password, text) {
-      if(!password) throw new Error("password was not provided")
-        let iv = getRandomBytes(12)
-        let salt = getRandomBytes(16)
-        let encodedPT = encodeText(text)
-        let key = await deriveKey(password, salt)
+             const deserializeCT = function(serializedCT) {
+                 let { salt, iv, ciphertext } = JSON.parse(serializedCT)
 
-        let ct = await crypto.subtle.encrypt(
-            {
-                name: "AES-GCM",
-                iv,
-            },
-            key,
-            encodedPT
-        )
+                 return {
+                     salt: b64toTypedArr(salt),
+                     iv: b64toTypedArr(iv),
+                     ct: b64toTypedArr(ciphertext),
+                 }
+             }
 
-        return `${typedArrToB64(salt)};${typedArrToB64(iv)};${typedArrToB64(new Uint8Array(ct))}`
-    }
+             const getRandomBytes = function(n) {
+                 return window.crypto.getRandomValues(new Uint8Array(n))
+             }
 
-    const decrypt = async function(password, serializedCT) {
-        if(!password) throw new Error("password was not provided")
-        try {
-            let { salt, iv, ct } = deserializeCT(serializedCT)
+             const encrypt = async function(password, text) {
+                 if (!password) throw new Error("password was not provided")
+                 let iv = getRandomBytes(12)
+                 let salt = getRandomBytes(16)
+                 let encodedPT = encodeText(text)
+                 let key = await deriveKey(password, salt)
 
-            let key = await deriveKey(password, salt)
+                 let ct = await crypto.subtle.encrypt(
+                     {
+                         name: "AES-GCM",
+                         iv,
+                     },
+                     key,
+                     encodedPT
+                 )
 
-            let res = await window.crypto.subtle.decrypt(
-                {
-                    name: "AES-GCM",
-                    iv,
-                },
-                key,
-                ct
-            )
+                 let output = {
+                     algorithm: ENCRYPTION_ALGO,
+                     keylength: KEY_LENGTH,
+                     kdf: { iterations: KDF_ITERATIONS, algo: KDF_NAME, hash: KDF_HASH },
+                     salt: typedArrToB64(salt),
+                     iv: typedArrToB64(iv),
+                     ciphertext: typedArrToB64(new Uint8Array(ct)),
+                 }
 
-            return decodeText(res)
-        } catch (e) {
-            console.error(e)
-            throw new Error("incorrect password")
-        }
-    }
+                 return JSON.stringify(output)
+             }
 
-    const generatePassword = function(bitLength) {
-        return typedArrToB64(getRandomBytes(bitLength / 8)).replace(/=/g, "")
-    }
+             const decrypt = async function(password, serializedCT) {
+                 if (!password) throw new Error("password was not provided")
+                 try {
+                     let { salt, iv, ct } = deserializeCT(serializedCT)
 
-    return { encrypt, decrypt, generatePassword }
-})()
+                     let key = await deriveKey(password, salt)
+
+                     let res = await window.crypto.subtle.decrypt(
+                         {
+                             name: "AES-GCM",
+                             iv,
+                         },
+                         key,
+                         ct
+                     )
+
+                     return decodeText(res)
+                 } catch (e) {
+                     console.error(e)
+                     throw new Error("incorrect password")
+                 }
+             }
+
+             const generatePassword = function(bitLength) {
+                 return typedArrToB64(getRandomBytes(bitLength / 8)).replace(/=/g, "")
+             }
+
+             return { encrypt, decrypt, generatePassword }
+         })()
+
 
 class Item {
     constructor(model, savePasswords, removeItem) {
@@ -314,7 +332,7 @@ class PasswordManager {
     }
 
     async onLaunch() {
-      if(!localStorage.getItem("__PW_STORAGE__")){
+      if(!localStorage.getItem("__PW_STORAGE__V2")){
           let masterPassword = prompt("Select your master password")
           if(!masterPassword) return
           this.masterPassword = masterPassword
@@ -329,7 +347,7 @@ class PasswordManager {
               throw new Error("no master password")
             }
 
-            let storageEnc = localStorage.getItem("__PW_STORAGE__")
+            let storageEnc = localStorage.getItem("__PW_STORAGE__V2")
 
             let storageDec = await simpleCrypto.decrypt(masterPassword, storageEnc)
             this.masterPassword = masterPassword
@@ -341,7 +359,7 @@ class PasswordManager {
     async savePasswords() {
         let storageStr = JSON.stringify(this.items)
         let storageEnc = await simpleCrypto.encrypt(this.masterPassword, storageStr)
-        localStorage.setItem("__PW_STORAGE__", storageEnc)
+        localStorage.setItem("__PW_STORAGE__V2", storageEnc)
     }
 
     renderItems() {
@@ -375,7 +393,7 @@ class PasswordManager {
     }
 
     exportEncryptedStorage() {
-        console.log(localStorage.getItem("__PW_STORAGE__"))
+        console.log(localStorage.getItem("__PW_STORAGE__V2"))
     }
 
     exportPlaintextStorage() {
@@ -388,7 +406,7 @@ class PasswordManager {
                 "Warning: this action will permantently erase the current storage. Are you sure you want to continue?"
             )
         ) {
-            localStorage.setItem("__PW_STORAGE__", newStorage)
+            localStorage.setItem("__PW_STORAGE__V2", newStorage)
             window.location.reload()
         }
     }
